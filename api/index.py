@@ -4,9 +4,8 @@ import urllib.error
 import re
 
 TARGET_SOURCE_DOMAIN = 'www.faselhds.life'
-
 ROBOTS_TAG = "<meta name='robots' content='index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1' />"
-GOOGLE_VERIFY = "<meta name='google-site-verification' content='HWrhtgkCPV2OT-OWRzV60Vdl1pWxt35-aEZ7NNDTHWs' />"
+GOOGLE_VERIFY = "<meta name='google-site-verification' content='4aeE1nom200vJpqjv46jujHDGVAuIdF2tA8rycTjFnE' />"
 
 HEADER_BOX = '''
 <div style="width:100%;background:#blue;color:#fff;padding:20px;text-align:center;font-size:22px;font-weight:bold;direction:rtl;">
@@ -130,3 +129,4 @@ class handler(BaseHTTPRequestHandler):
             self.end_headers()
             error_msg = f"Error: {str(e)}"
             self.wfile.write(error_msg.encode())
+
