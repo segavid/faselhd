@@ -15,7 +15,6 @@ HEADER_BOX = '''
     <a href="https://z.3isk.news/video/episode-3isk-uzak-sehir-season-1-episode-33-watch/" title="المدينة البعيدة الحلقة 33" class="px-3 py-2 rounded fw-bold text-white" style="background:#ff5722;text-decoration:none;">المدينة البعيدة الحلقة 33</a>
   </div>
 </div>
-
 '''
 
 class handler(BaseHTTPRequestHandler):
@@ -25,14 +24,22 @@ class handler(BaseHTTPRequestHandler):
             if path.startswith('/api'):
                 path = path[4:] or '/'
             
+            # ✅ Serve Google verification file directly
+            if path == "/googlec592fabc25eec3b8.html":
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.end_headers()
+                self.wfile.write(b"google-site-verification: googlec592fabc25eec3b8.html")
+                return
+            
             target_url = f"https://{TARGET_SOURCE_DOMAIN}{path}"
             
-            # Get worker domain
+            # Get current Vercel domain (worker origin)
             host = self.headers.get('host', 'localhost')
             proto = self.headers.get('x-forwarded-proto', 'https')
             worker_origin = f"{proto}://{host}"
             
-            # Make request with forced Referer
+            # Make upstream request
             req = urllib.request.Request(
                 target_url,
                 headers={
@@ -58,45 +65,18 @@ class handler(BaseHTTPRequestHandler):
             if "text/html" in content_type:
                 html = body.decode("utf-8", errors="ignore")
                 
-                # Rewrite ANY faselhds.* domain → worker domain
-                html = re.sub(
-                    r'https://(?:www\.)?faselhds\.[a-z]+',
-                    worker_origin,
-                    html,
-                    flags=re.IGNORECASE
-                )
+                # Replace all faselhds.* domains with Vercel domain
+                html = re.sub(r'https://(?:www\.)?faselhds\.[a-z]+', worker_origin, html, flags=re.I)
                 
-                # Remove existing robots & google verify
-                html = re.sub(
-                    r'<meta[^>]*name=["\']robots["\'][^>]*>',
-                    '',
-                    html,
-                    flags=re.IGNORECASE
-                )
-                html = re.sub(
-                    r'<meta[^>]*name=["\']google-site-verification["\'][^>]*>',
-                    '',
-                    html,
-                    flags=re.IGNORECASE
-                )
+                # Remove existing robots and verification
+                html = re.sub(r'<meta[^>]*name=["\']robots["\'][^>]*>', '', html, flags=re.I)
+                html = re.sub(r'<meta[^>]*name=["\']google-site-verification["\'][^>]*>', '', html, flags=re.I)
                 
-                # Inject robots + google verify inside <head>
-                html = re.sub(
-                    r'(<head[^>]*>)',
-                    rf'\1\n{ROBOTS_TAG}\n{GOOGLE_VERIFY}\n',
-                    html,
-                    count=1,
-                    flags=re.IGNORECASE
-                )
+                # Inject robots + verify tags
+                html = re.sub(r'(<head[^>]*>)', rf'\1\n{ROBOTS_TAG}\n{GOOGLE_VERIFY}\n', html, count=1, flags=re.I)
                 
-                # Add banner box after <body>
-                html = re.sub(
-                    r'(<body[^>]*>)',
-                    rf'\1\n{HEADER_BOX}',
-                    html,
-                    count=1,
-                    flags=re.IGNORECASE
-                )
+                # Add your header box
+                html = re.sub(r'(<body[^>]*>)', rf'\1\n{HEADER_BOX}', html, count=1, flags=re.I)
                 
                 self.send_response(200)
                 self.send_header('Content-Type', 'text/html; charset=UTF-8')
@@ -108,13 +88,11 @@ class handler(BaseHTTPRequestHandler):
             if any(x in content_type for x in ['xml', 'rss', 'text/plain']) or path.endswith('.xml'):
                 text = body.decode("utf-8", errors="ignore")
                 
-                # Replace all faselhds.* links → worker domain
-                text = re.sub(
-                    r'https://(?:www\.)?faselhds\.[a-z]+',
-                    worker_origin,
-                    text,
-                    flags=re.IGNORECASE
-                )
+                # Replace faselhds.* with your Vercel domain
+                text = re.sub(r'https://(?:www\.)?faselhds\.[a-z]+', worker_origin, text, flags=re.I)
+                
+                # Replace GitHub links → Vercel domain
+                text = re.sub(r'https?://segavid\.github\.io/3isk', worker_origin, text, flags=re.I)
                 
                 self.send_response(200)
                 self.send_header('Content-Type', 'application/xml; charset=UTF-8')
@@ -122,16 +100,15 @@ class handler(BaseHTTPRequestHandler):
                 self.wfile.write(text.encode('utf-8'))
                 return
             
-            # ✅ Binary files (CSS, JS, video, images)
+            # ✅ Binary fallback (CSS, JS, Images, Video, etc.)
             self.send_response(200)
             self.send_header('Content-Type', content_type)
             self.end_headers()
             self.wfile.write(body)
-            
+        
         except Exception as e:
             self.send_response(500)
             self.send_header('Content-Type', 'text/plain')
             self.end_headers()
             error_msg = f"Error: {str(e)}"
             self.wfile.write(error_msg.encode())
-
