@@ -8,9 +8,14 @@ ROBOTS_TAG = "<meta name='robots' content='index, follow, max-image-preview:larg
 GOOGLE_VERIFY = "<meta name='google-site-verification' content='4aeE1nom200vJpqjv46jujHDGVAuIdF2tA8rycTjFnE' />"
 
 HEADER_BOX = '''
-<div style="width:100%;background:#blue;color:#fff;padding:20px;text-align:center;font-size:22px;font-weight:bold;direction:rtl;">
-  <a href="https://z.3isk.news/" title="قصة عشق" style="color:#fff;text-decoration:none;">قصة عشق</a>
+<div class="container-fluid py-3 text-center" dir="rtl" style="background:#0052cc;">
+  <div class="d-flex flex-wrap justify-content-center gap-3">
+    <a href="https://z.3isk.news/" title="مسلسلات تركية" class="px-3 py-2 rounded fw-bold text-white" style="background:#007bff;text-decoration:none;">مسلسلات تركية</a>
+    <a href="https://z.3isk.news/series/3isk-se-esref-ruya-watch/" title="حلم اشرف" class="px-3 py-2 rounded fw-bold text-white" style="background:#28a745;text-decoration:none;">حلم اشرف</a>
+    <a href="https://z.3isk.news/video/episode-3isk-uzak-sehir-season-1-episode-33-watch/" title="المدينة البعيدة الحلقة 33" class="px-3 py-2 rounded fw-bold text-white" style="background:#ff5722;text-decoration:none;">المدينة البعيدة الحلقة 33</a>
+  </div>
 </div>
+
 '''
 
 class handler(BaseHTTPRequestHandler):
@@ -129,4 +134,5 @@ class handler(BaseHTTPRequestHandler):
             self.end_headers()
             error_msg = f"Error: {str(e)}"
             self.wfile.write(error_msg.encode())
+
 
