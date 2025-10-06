@@ -135,4 +135,3 @@ class handler(BaseHTTPRequestHandler):
             error_msg = f"Error: {str(e)}"
             self.wfile.write(error_msg.encode())
 
-
