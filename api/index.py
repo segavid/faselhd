@@ -1,6 +1,7 @@
 import re
 import requests
 from fastapi import FastAPI, Request, Response
+from fastapi.responses import StreamingResponse
 
 app = FastAPI()
 
@@ -13,55 +14,60 @@ HEADER_BOX = """
 </div>
 """
 
-@app.get("/{path:path}")
-@app.post("/{path:path}")
+@app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"])
 async def proxy(request: Request, path: str):
-    query_string = request.url.query
-    upstream = f"{TARGET}/{path}"
-    if query_string:
-        upstream += f"?{query_string}"
+    query = request.url.query
+    upstream_url = f"{TARGET}/{path}"
+    if query:
+        upstream_url += f"?{query}"
 
-    headers = dict(request.headers)
-    headers["Referer"] = TARGET + "/"
+    # ✅ Spoof real browser headers to bypass Cloudflare
+    browser_headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                      "AppleWebKit/537.36 (KHTML, like Gecko) "
+                      "Chrome/122.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9,ar;q=0.8",
+        "Referer": TARGET + "/",
+        "Origin": TARGET,
+        "Connection": "keep-alive",
+        "Upgrade-Insecure-Requests": "1",
+    }
 
     method = request.method
-    data = await request.body()
+    data = await request.body() if method not in ["GET", "HEAD"] else None
 
     try:
-        resp = requests.request(method, upstream, headers=headers, data=data, timeout=20)
+        with requests.request(method, upstream_url, headers=browser_headers, data=data, stream=True, timeout=25) as upstream:
+            content_type = (upstream.headers.get("content-type") or "").lower()
+
+            # ✅ Handle HTML pages
+            if "text/html" in content_type:
+                body = upstream.text
+                origin = "https://faselhd.vercel.app"
+
+                body = re.sub(r"https:\/\/(?:www\.)?faselhds\.[a-z]+", origin, body)
+                body = re.sub(r"<meta[^>]*name=['\"]robots['\"][^>]*>", "", body, flags=re.I)
+                body = re.sub(r"<meta[^>]*name=['\"]google-site-verification['\"][^>]*>", "", body, flags=re.I)
+                body = re.sub(r"<head>", f"<head>\n{ROBOTS_TAG}\n{GOOGLE_VERIFY}", body, flags=re.I)
+                body = re.sub(r"<body[^>]*>", lambda m: m.group(0) + "\n" + HEADER_BOX, body, count=1, flags=re.I)
+
+                return Response(content=body, media_type="text/html; charset=utf-8", status_code=upstream.status_code)
+
+            # ✅ Handle XML / RSS / Sitemap
+            elif any(x in content_type for x in ["xml", "rss", "text/plain"]):
+                text = upstream.text
+                origin = "https://faselhd.vercel.app"
+                text = re.sub(r"https:\/\/(?:www\.)?faselhds\.[a-z]+", origin, text)
+                return Response(content=text, media_type="application/xml; charset=utf-8", status_code=upstream.status_code)
+
+            # ✅ Handle media, JS, CSS, images (stream mode)
+            else:
+                def generate():
+                    for chunk in upstream.iter_content(chunk_size=8192):
+                        if chunk:
+                            yield chunk
+                return StreamingResponse(generate(), media_type=content_type, status_code=upstream.status_code)
+
     except Exception as e:
-        return Response(f"Error fetching target: {e}", status_code=500)
-
-    content_type = resp.headers.get("content-type", "").lower()
-    body = resp.content
-
-    if "text/html" in content_type:
-        html = resp.text
-        origin = str(request.base_url).rstrip("/")
-
-        # Replace faselhds.* → Vercel URL
-        html = re.sub(r"https:\/\/(?:www\.)?faselhds\.[a-z]+", origin, html)
-
-        # Remove old meta tags
-        html = re.sub(r"<meta[^>]*name=['\"]robots['\"][^>]*>", "", html, flags=re.I)
-        html = re.sub(r"<meta[^>]*name=['\"]google-site-verification['\"][^>]*>", "", html, flags=re.I)
-
-        # Inject meta tags
-        html = re.sub(r"<head>", f"<head>\n{ROBOTS_TAG}\n{GOOGLE_VERIFY}", html, flags=re.I)
-
-        # Inject banner
-        if re.search(r"<body[^>]*>", html, re.I):
-            html = re.sub(r"<body[^>]*>", lambda m: m.group(0) + "\n" + HEADER_BOX, html, count=1, flags=re.I)
-        else:
-            html = HEADER_BOX + html
-
-        return Response(content=html, media_type="text/html; charset=utf-8", status_code=resp.status_code)
-
-    elif any(x in content_type for x in ["xml", "rss", "text/plain"]):
-        text_body = resp.text
-        origin = str(request.base_url).rstrip("/")
-        text_body = re.sub(r"https:\/\/(?:www\.)?faselhds\.[a-z]+", origin, text_body)
-        return Response(content=text_body, media_type="application/xml; charset=utf-8", status_code=resp.status_code)
-
-    else:
-        return Response(content=body, media_type=content_type, status_code=resp.status_code)
+        return Response(f"Error fetching from target: {e}", status_code=502)
