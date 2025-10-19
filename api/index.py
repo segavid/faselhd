@@ -1,114 +1,123 @@
-from http.server import BaseHTTPRequestHandler
-import urllib.request
-import urllib.error
+import os
 import re
+from flask import Flask, request, Response
+import requests # Need to install: pip install requests
 
-TARGET_SOURCE_DOMAIN = 'www.faselhds.life'
+# --- Configuration Constants ---
+TARGET = "https://www.faselhds.biz"
+
 ROBOTS_TAG = "<meta name='robots' content='index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1' />"
-GOOGLE_VERIFY = "<meta name='google-site-verification' content='4aeE1nom200vJpqjv46jujHDGVAuIdF2tA8rycTjFnE' />"
-
-HEADER_BOX = '''
-<div class="container-fluid py-3 text-center" dir="rtl" style="background:#0052cc;">
-  <div class="d-flex flex-wrap justify-content-center gap-3">
-    <a href="https://z.3isk.news/" title="مسلسلات تركية" class="px-3 py-2 rounded fw-bold text-white" style="background:#007bff;text-decoration:none;">مسلسلات تركية</a>
-    <a href="https://z.3isk.news/series/3isk-se-esref-ruya-watch/" title="حلم اشرف" class="px-3 py-2 rounded fw-bold text-white" style="background:#28a745;text-decoration:none;">حلم اشرف</a>
-    <a href="https://z.3isk.news/video/episode-3isk-uzak-sehir-season-1-episode-33-watch/" title="المدينة البعيدة الحلقة 33" class="px-3 py-2 rounded fw-bold text-white" style="background:#ff5722;text-decoration:none;">المدينة البعيدة الحلقة 33</a>
-  </div>
+GOOGLE_VERIFY = "<meta name='google-site-verification' content='HWrhtgkCPV2OT-OWRzV60Vdl1pWxt35-aEZ7NNDTHWs' />"
+HEADER_BOX = """
+<div style="width:100%;background:#blue;color:#fff;padding:20px;text-align:center;font-size:22px;font-weight:bold;direction:rtl;">
+  <a href="https://z.3isk.news/" title="قصة عشق" style="color:#fff;text-decoration:none;">قصة عشق</a>
 </div>
-'''
+"""
+# Regex pattern to match the target domain variations
+# https://www.faselhds.[a-z]+ or https://faselhds.[a-z]+
+DOMAIN_REPLACEMENT_PATTERN = re.compile(r"https?:\/\/(?:www\.)?faselhds\.[a-z]+", re.IGNORECASE)
 
-class handler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        try:
-            path = self.path
-            if path.startswith('/api'):
-                path = path[4:] or '/'
-            
-            # ✅ Serve Google verification file directly
-            if path == "/googlec592fabc25eec3b8.html":
-                self.send_response(200)
-                self.send_header("Content-Type", "text/html; charset=utf-8")
-                self.end_headers()
-                self.wfile.write(b"google-site-verification: googlec592fabc25eec3b8.html")
-                return
-            
-            target_url = f"https://{TARGET_SOURCE_DOMAIN}{path}"
-            
-            # Get current Vercel domain (worker origin)
-            host = self.headers.get('host', 'localhost')
-            proto = self.headers.get('x-forwarded-proto', 'https')
-            worker_origin = f"{proto}://{host}"
-            
-            # Make upstream request
-            req = urllib.request.Request(
-                target_url,
-                headers={
-                    "User-Agent": "Mozilla/5.0",
-                    "Accept": "*/*",
-                    "Referer": "https://www.faselhds.life/"
-                }
-            )
-            
-            try:
-                response = urllib.request.urlopen(req, timeout=10)
-            except urllib.error.HTTPError as e:
-                self.send_response(e.code)
-                self.send_header('Content-Type', 'text/plain')
-                self.end_headers()
-                self.wfile.write(f"Error {e.code}".encode())
-                return
-            
-            content_type = response.headers.get("Content-Type", "").lower()
-            body = response.read()
-            
-            # ✅ Handle HTML
-            if "text/html" in content_type:
-                html = body.decode("utf-8", errors="ignore")
-                
-                # Replace all faselhds.* domains with Vercel domain
-                html = re.sub(r'https://(?:www\.)?faselhds\.[a-z]+', worker_origin, html, flags=re.I)
-                
-                # Remove existing robots and verification
-                html = re.sub(r'<meta[^>]*name=["\']robots["\'][^>]*>', '', html, flags=re.I)
-                html = re.sub(r'<meta[^>]*name=["\']google-site-verification["\'][^>]*>', '', html, flags=re.I)
-                
-                # Inject robots + verify tags
-                html = re.sub(r'(<head[^>]*>)', rf'\1\n{ROBOTS_TAG}\n{GOOGLE_VERIFY}\n', html, count=1, flags=re.I)
-                
-                # Add your header box
-                html = re.sub(r'(<body[^>]*>)', rf'\1\n{HEADER_BOX}', html, count=1, flags=re.I)
-                
-                self.send_response(200)
-                self.send_header('Content-Type', 'text/html; charset=UTF-8')
-                self.end_headers()
-                self.wfile.write(html.encode('utf-8'))
-                return
-            
-            # ✅ Handle XML / RSS / Sitemap
-            if any(x in content_type for x in ['xml', 'rss', 'text/plain']) or path.endswith('.xml'):
-                text = body.decode("utf-8", errors="ignore")
-                
-                # Replace faselhds.* with your Vercel domain
-                text = re.sub(r'https://(?:www\.)?faselhds\.[a-z]+', worker_origin, text, flags=re.I)
-                
-                # Replace GitHub links → Vercel domain
-                text = re.sub(r'https?://segavid\.github\.io/3isk', worker_origin, text, flags=re.I)
-                
-                self.send_response(200)
-                self.send_header('Content-Type', 'application/xml; charset=UTF-8')
-                self.end_headers()
-                self.wfile.write(text.encode('utf-8'))
-                return
-            
-            # ✅ Binary fallback (CSS, JS, Images, Video, etc.)
-            self.send_response(200)
-            self.send_header('Content-Type', content_type)
-            self.end_headers()
-            self.wfile.write(body)
+app = Flask(__name__)
+
+@app.route("/", defaults={'path': ''}, methods=['GET', 'POST', 'PUT', 'DELETE', 'PATCH'])
+@app.route("/<path:path>", methods=['GET', 'POST', 'PUT', 'DELETE', 'PATCH'])
+def handle_request(path):
+    """
+    Handles all incoming HTTP requests, proxies them to the TARGET, and modifies 
+    the content (HTML/XML) before sending the response back.
+    """
+    
+    # 1. Determine the upstream URL
+    # Construct the URL by appending the path and query string to the TARGET
+    upstream_url = f"{TARGET}/{path}"
+    if request.query_string:
+        upstream_url += f"?{request.query_string.decode('utf-8')}"
+    
+    # Get the scheme (http or https) and host of the worker (Vercel) domain
+    # This is used for replacing links in the content
+    worker_origin = request.url_root.rstrip('/')
+
+    # 2. Prepare headers for the upstream request
+    new_headers = dict(request.headers)
+    # Set the Referer header as in the original JS code
+    new_headers["Referer"] = "https://www.faselhds.biz/"
+    # It's good practice to remove hop-by-hop headers if they exist
+    hop_by_hop = ['connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization', 'te', 'trailers', 'transfer-encoding', 'upgrade', 'content-encoding', 'content-length']
+    for h in hop_by_hop:
+        new_headers.pop(h, None)
+
+    # 3. Proxy the request
+    try:
+        # Use requests to make the upstream call
+        resp = requests.request(
+            method=request.method,
+            url=upstream_url,
+            headers=new_headers,
+            data=request.get_data(), # Pass request body for POST/PUT/etc.
+            stream=True, # Enable streaming for non-text content
+            allow_redirects=False # Keep logic simpler, let the worker handle redirects if needed
+        )
+    except requests.exceptions.RequestException as e:
+        # Handle connection errors
+        return Response(f"Proxy Error: {e}", status=503)
+
+    # 4. Process the response content
+    
+    content_type = resp.headers.get("Content-Type", "").lower()
+    
+    # Get response headers from upstream, excluding `Content-Length` (it will be recalculated)
+    response_headers = {k: v for k, v in resp.headers.items() if k.lower() not in ('content-length',)}
+
+    # --- ✅ Handle HTML ---
+    if "text/html" in content_type:
+        body = resp.text
         
-        except Exception as e:
-            self.send_response(500)
-            self.send_header('Content-Type', 'text/plain')
-            self.end_headers()
-            error_msg = f"Error: {str(e)}"
-            self.wfile.write(error_msg.encode())
+        # Rewrite ALL faselhds.* domain → worker domain
+        body = DOMAIN_REPLACEMENT_PATTERN.sub(worker_origin, body)
+
+        # Remove existing robots & google verify meta tags
+        body = re.sub(r"<meta[^>]*name=['\"]robots['\"][^>]*>", "", body, flags=re.IGNORECASE)
+        body = re.sub(r"<meta[^>]*name=['\"]google-site-verification['\"][^>]*>", "", body, flags=re.IGNORECASE)
+
+        # Inject robots + google verify inside <head>
+        body = re.sub(r"<head>", r"<head>\n" + ROBOTS_TAG + "\n" + GOOGLE_VERIFY, body, count=1, flags=re.IGNORECASE)
+
+        # Add banner box after <body>
+        if "<body" in body.lower():
+            # Use a function replacement to handle any <body> tag attributes
+            def add_header_box(match):
+                return match.group(0) + "\n" + HEADER_BOX
+            body = re.sub(r"<body[^>]*>", add_header_box, body, count=1, flags=re.IGNORECASE)
+        else:
+            body = HEADER_BOX + body # Prepend if <body> not found
+
+        # Explicitly set content type for the modified HTML
+        response_headers["Content-Type"] = "text/html; charset=UTF-8"
+        
+        return Response(body, status=resp.status_code, headers=response_headers)
+
+    # --- ✅ Handle XML / RSS / Sitemap ---
+    if any(tag in content_type for tag in ["xml", "rss", "text/plain"]):
+        body = resp.text
+        
+        # Replace all faselhds.* links → worker domain
+        body = DOMAIN_REPLACEMENT_PATTERN.sub(worker_origin, body)
+
+        # Explicitly set content type for the modified XML/Text
+        response_headers["Content-Type"] = "application/xml; charset=UTF-8"
+
+        return Response(body, status=resp.status_code, headers=response_headers)
+
+    # --- ✅ Pass through everything else (CSS, JS, video, images) ---
+    
+    # Return the raw content streamed from the upstream response
+    # The generator expression yields chunks of data from the upstream
+    return Response(
+        resp.iter_content(chunk_size=8192), 
+        status=resp.status_code, 
+        headers=response_headers
+    )
+
+if __name__ == '__main__':
+    # This block is for local testing only
+    app.run(debug=True)
